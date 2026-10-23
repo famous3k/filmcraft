@@ -1,7 +1,7 @@
 # 내 수정 기록 (ko-local 브랜치)
 
 원본: <https://github.com/storytold/filmcraft> (`upstream`) · 내 포크: <https://github.com/famous3k/filmcraft> (`origin`)
-기준 원본 커밋: `07f2d3a2` (2026-10-22, v0.11.0 이후)
+기준 원본 커밋: `07f2d3a2` (2026-10-22, v0.12.0 출시 직후)
 
 원칙: **원본 코드는 꼭 필요한 곳만 최소로 고친다.** 새 기능(무음 삭제, Whisper 자막)은 원본을 건드리지 않는
 `local-tools/` 폴더의 독립 도구로 두고, 앱과는 컨트롤 채널(포트 9876)의 엔진 명령으로만 연결한다.
@@ -9,7 +9,7 @@
 
 | # | 종류 | 파일 | 원본 수정 |
 |---|---|---|---|
-| 1 | 버그 수정 | `crates/ui-egui/src/panels/graphics.rs`, `crates/ui-egui/tests/graphics_handles_ui.rs` | 예 (+35줄, 테스트 +31줄) |
+| 1 | 버그 수정 (커밋 2개) | `crates/ui-egui/src/panels/graphics.rs`, `crates/ui-egui/tests/graphics_handles_ui.rs` | 예 (+40줄, 테스트 +49줄) |
 | 2 | 새 도구 | `local-tools/silence_cut.py` | 아니오 |
 | 3 | 새 도구 | `local-tools/whisper_subs.py` | 아니오 |
 
@@ -21,9 +21,16 @@
 - 프로그램 모니터에서 문자 도구(Type tool)로 직접 입력하면 영어는 바로 써지지만 한글은 아무 반응이 없다.
 - 텍스트 패널의 입력칸에서는 한글이 잘 써진다.
 
-### 원인
+### 원인 (두 가지)
 - 프로그램 모니터의 텍스트 편집기는 egui 표준 `TextEdit` 가 아니라 `graphics.rs` 의 자체 편집기(`fn text_edit`)다.
-- 이 편집기는 입력기(IME)의 **확정 글자(`ImeEvent::Commit`)만** 받고, **조합 중 글자(`ImeEvent::Preedit`)는 버렸다.**
+- **(가) 매 프레임 IME 조합을 끊었다 — 핵심 원인.** 이 편집기는 키보드를 잡아 두려고 매 프레임
+  `memory.request_focus(eid)` 를 불렀는데, egui 0.36 의 `request_focus` 는 **IME 조합도 중단시킨다**
+  (`Memory::request_focus` → `interrupt_ime()` → `IMEOutput::should_interrupt_composition = true`
+  → egui-winit 이 `set_ime_allowed(false/true)`). 그래서 한국어 IME 는 자모를 칠 때마다 새로 시작해
+  `ㅇ`, `ㅏ`, `ㄴ` 이 한 글자로 합쳐지지 못했고 확정(Commit)도 오지 않아 아무것도 써지지 않았다.
+  (가)만 고치고 (나)를 안 고친 1차 수정에서는 "ㅇ 이 뜨고 ㅏ 를 누르면 ㅇ 이 사라지고 ㅏ 만 남는" 증상이 났다.
+- **(나) 조합 중 글자를 버렸다.** 입력기(IME)의 **확정 글자(`ImeEvent::Commit`)만** 받고,
+  **조합 중 글자(`ImeEvent::Preedit`)는 버렸다.**
 - 한국어 IME 는 음절마다 조합 상태로 두다가 다음 음절을 시작할 때에야 앞 음절을 확정한다.
   그래서 치는 동안 화면에 아무것도 나오지 않았고, 편집을 끝내면 마지막 음절이 사라졌다.
   (중국어 병음처럼 후보를 고르는 입력기는 확정 위주라 증상이 드러나지 않았다. 원본 #1083 이 Commit 만 고친 이유.)
@@ -31,7 +38,10 @@
 - 폰트 문제는 아니다: 한글 텍스트 레이어는 모니터에 정상으로 그려진다(확인함).
 
 ### 수정 내용 (`graphics.rs` 의 `fn text_edit` 와 `fn end_edit`)
-egui 표준 `TextEdit` 와 같은 방식으로 처리한다.
+0. **(가)** `request_focus(eid)` 는 포커스가 없을 때만 부른다: `if !m.has_focus(eid) { m.request_focus(eid); }`.
+   (`set_focus_lock_filter` 는 그대로 매 프레임.)
+
+나머지 **(나)** 는 egui 표준 `TextEdit` 와 같은 방식으로 처리한다.
 1. `ImeEvent::Preedit(text)` 가 오면 조합 중 글자를 레이어 텍스트에 넣고 그 범위를 선택(`anchor..caret`)으로 둔다.
    다음 Preedit 은 그 선택 범위를 바꿔 끼운다. 빈 Preedit 은 조합 중 글자를 지운다.
 2. `Commit`(그리고 `Text`/`Paste`)이 오면 조합 중 글자 범위를 먼저 지우고 확정 글자를 넣는다.
@@ -45,15 +55,22 @@ egui 표준 `TextEdit` 와 같은 방식으로 처리한다.
 `crates/ui-egui/tests/graphics_handles_ui.rs` 의 `korean_composed_by_an_input_method_shows_while_typing`:
 Microsoft 한국어 IME 가 `ㅎ ㅏ ㄴ ㄱ ㅡ ㄹ` 입력에 보내는 이벤트 순서를 그대로 흉내 내 `A한글` → 백스페이스 → `A한그` → 확정 → `B` 를 확인한다.
 수정 전 코드에서는 `"A"` 만 남아 실패한다(확인함).
+`editing_text_on_the_monitor_does_not_interrupt_the_input_method`: 편집 중 프레임 출력의
+`ime.should_interrupt_composition` 이 `false` 인지 확인한다. (가) 수정 전에는 실패한다(확인함).
 ```
 cargo test -p filmcraft-ui-egui --test graphics_handles_ui -- input_method korean
 ```
+주의: 테스트는 IME 이벤트를 흉내 낼 뿐이라, 원본 업데이트 뒤에는 실제 한국어 키보드로도 한 번
+`안녕하세요` 를 쳐서 확인한다.
 
 ### 다시 적용하는 법 (원본이 바뀌어 `update.ps1` 이 충돌로 멈췄을 때)
-1. `git log --oneline upstream/main..ko-local` 로 이 패치 커밋을 찾는다 (제목: `ui: show IME pre-edit text …`).
-2. `git checkout -B ko-local upstream/main` 후 `git cherry-pick <커밋>`.
-3. 충돌하면 `graphics.rs` 에서 `fn text_edit` 의 이벤트 처리 `match` 를 찾아 위 "수정 내용" 1~5를 다시 넣는다.
-   - 원본이 이미 `ImeEvent::Preedit` 를 처리하고 있다면(원본에서 고쳐졌다면) 이 패치는 버리면 된다.
+1. `git log --oneline upstream/main..ko-local` 로 이 패치 커밋 2개를 찾는다
+   (제목: `ui: show IME pre-edit text …`, `ui: stop interrupting the IME …`).
+2. `git checkout -B ko-local upstream/main` 후 `git cherry-pick <커밋1> <커밋2>` (그다음 local-tools 커밋들).
+3. 충돌하면 `graphics.rs` 의 `fn text_edit` 에서 `request_focus` 와 이벤트 처리 `match` 를 찾아
+   위 "수정 내용" 0~5를 다시 넣는다.
+   - 원본이 이미 `ImeEvent::Preedit` 를 처리하고 매 프레임 `request_focus` 를 부르지 않는다면
+     (원본에서 고쳐졌다면) 이 패치는 버리면 된다.
 4. 위 테스트가 통과하는지 확인한다.
 
 ---

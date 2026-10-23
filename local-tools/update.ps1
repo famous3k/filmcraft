@@ -29,6 +29,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "빌드 중... (몇 분 걸립니다)"
 Get-Process filmcraft -ErrorAction SilentlyContinue | ForEach-Object { Fail "FilmCraft 가 실행 중입니다. 닫고 다시 실행하세요." }
 cargo build --release -p filmcraft -p filmcraft-cli
+# (테스트는 IME 이벤트를 흉내 낼 뿐이니, 업데이트 뒤 모니터에서 한 번 한글을 직접 쳐 보자)
 if ($LASTEXITCODE -ne 0) { git reset --hard $before; Fail "빌드 실패. 업데이트 전 상태로 되돌렸습니다." }
 
 Write-Host "한글 입력 테스트 중..."
