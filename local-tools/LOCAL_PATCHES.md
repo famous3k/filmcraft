@@ -60,6 +60,7 @@ Microsoft 한국어 IME 가 `ㅎ ㅏ ㄴ ㄱ ㅡ ㄹ` 입력에 보내는 이벤
 ```
 cargo test -p filmcraft-ui-egui --test graphics_handles_ui -- input_method korean
 ```
+2026-10-23: Windows 11 Microsoft 한국어 IME 로 모니터에 직접 입력해 정상 동작 확인함 (v0.12.0 기준).
 주의: 테스트는 IME 이벤트를 흉내 낼 뿐이라, 원본 업데이트 뒤에는 실제 한국어 키보드로도 한 번
 `안녕하세요` 를 쳐서 확인한다.
 
