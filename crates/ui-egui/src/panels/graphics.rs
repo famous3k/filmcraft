@@ -1039,7 +1039,11 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
         return;
     }
     ui.memory_mut(|m| {
-        m.request_focus(eid);
+        // only when it does not have it: `request_focus` also interrupts the input method's
+        // composition, and asking every frame restarted Korean at each key (ㅇ, ㅏ, ㄴ never joined)
+        if !m.has_focus(eid) {
+            m.request_focus(eid);
+        }
         m.set_focus_lock_filter(eid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true });
     });
     let Some(tp) = text_of(&v.spec) else { return };

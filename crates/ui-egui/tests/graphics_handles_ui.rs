@@ -388,6 +388,24 @@ fn korean_composed_by_an_input_method_shows_while_typing() {
     assert_eq!(text(&mut d), "A한그B");
 }
 
+/// The input method's composition must survive while the text is edited: the editor asked for
+/// keyboard focus again every frame, and egui interrupts the composition on each `request_focus`,
+/// so the Korean IME restarted at every key and ㅇ ㅏ ㄴ never joined into 안.
+#[test]
+fn editing_text_on_the_monitor_does_not_interrupt_the_input_method() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.2}));
+    d.ok("ui.type", json!({"text": "A"}));
+    d.harness.input_mut().events.push(egui::Event::Ime(egui::ImeEvent::Preedit { text: "ㅇ".into(), active_range_chars: None }));
+    d.frames(4);
+    let ime = d.harness.output().platform_output.ime;
+    assert!(ime.is_some(), "the text being edited takes input-method text");
+    assert!(!ime.is_some_and(|i| i.should_interrupt_composition), "a composition in progress is left alone");
+}
+
 /// #2430: a click (no drag) in the text being edited on the monitor puts the caret there; before,
 /// only a press that moved a little did, and typing went on at the end.
 #[test]
