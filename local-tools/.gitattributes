@@ -1,0 +1,2 @@
+# cmd.exe misreads LF-only batch files
+*.bat text eol=crlf
