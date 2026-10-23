@@ -357,6 +357,37 @@ fn text_committed_by_an_input_method_is_typed_on_the_monitor() {
     assert_eq!(list["layers"][0]["text"], "A你好");
 }
 
+/// The Korean input method composes every syllable as pre-edit text and commits it only when the
+/// next one starts, so the composing syllable must show in the text: before, typing Korean on the
+/// monitor showed nothing, and the last syllable was lost when the edit ended.
+#[test]
+fn korean_composed_by_an_input_method_shows_while_typing() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.2}));
+    d.ok("ui.type", json!({"text": "A"}));
+    let text = |d: &mut Driver| d.exec("graphics.list", json!({}))["layers"][0]["text"].clone();
+    let preedit = |text: &str| egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None });
+    // the events Microsoft's Korean IME sends for ㅎ ㅏ ㄴ ㄱ ㅡ ㄹ
+    d.harness.input_mut().events.extend([preedit("ㅎ"), preedit("하"), preedit("한")]);
+    d.frames(4);
+    assert_eq!(text(&mut d), "A한", "the composing syllable shows");
+    d.harness.input_mut().events.extend([egui::Event::Ime(egui::ImeEvent::Commit("한".into())), preedit("ㄱ"), preedit("그"), preedit("글")]);
+    d.frames(4);
+    assert_eq!(text(&mut d), "A한글");
+    // Backspace inside the composition goes to the IME, which sends the shorter pre-edit
+    d.harness.input_mut().events.push(preedit("그"));
+    d.frames(4);
+    assert_eq!(text(&mut d), "A한그");
+    d.harness.input_mut().events.extend([preedit(""), egui::Event::Ime(egui::ImeEvent::Commit("그".into()))]);
+    d.frames(4);
+    assert_eq!(text(&mut d), "A한그", "the commit replaces the pre-edit text, not adds to it");
+    d.ok("ui.type", json!({"text": "B"}));
+    assert_eq!(text(&mut d), "A한그B");
+}
+
 /// #2430: a click (no drag) in the text being edited on the monitor puts the caret there; before,
 /// only a press that moved a little did, and typing went on at the end.
 #[test]

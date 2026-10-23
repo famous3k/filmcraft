@@ -509,6 +509,7 @@ fn end_edit(app: &mut FilmcraftApp, ui: &egui::Ui) {
     app.ui.gfx_edit = None;
     ui.memory_mut(|m| m.surrender_focus(egui::Id::new(TEXT_EDIT_ID)));
     ui.data_mut(|d| d.remove::<crate::dock::PanelKind>(egui::Id::new(TEXT_EDIT_ID).with("panel")));
+    ui.data_mut(|d| d.remove::<(u64, usize)>(egui::Id::new(TEXT_EDIT_ID).with("ime")));
 }
 
 /// A click on the Program monitor's empty space (the picture's, or around it): end the text edit
@@ -1023,6 +1024,12 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
         return;
     }
     let eid = egui::Id::new(TEXT_EDIT_ID);
+    // An input method's composition in progress (Korean composes every syllable): its pre-edit
+    // text sits in the layer as the selection `anchor..caret`, as egui's TextEdit keeps it, so it
+    // shows while typing and a click away keeps it; the next pre-edit or the commit replaces it.
+    // Without this, Korean showed nothing until the IME committed a finished syllable.
+    let ime_id = eid.with("ime");
+    let mut composing = ui.data(|d| d.get_temp::<(u64, usize)>(ime_id)) == Some((ed.clip, ed.layer));
     // a real (non-clickable) widget holds keyboard focus so shortcuts pause while typing
     let fr = ui.interact(Rect::from_points(&v.quad()), eid, Sense::focusable_noninteractive());
     fr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Text layer"));
@@ -1057,8 +1064,27 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
     for ev in events {
         match ev {
             // an input method (Chinese, Japanese, Korean) hands over its finished text as a commit (#1083)
+            egui::Event::Ime(egui::ImeEvent::Preedit { text: p, .. }) => {
+                // an empty pre-edit outside a composition must not clear a real selection
+                if p.is_empty() && !composing {
+                    continue;
+                }
+                let p: String = p.chars().filter(|c| !c.is_control()).collect();
+                delete_sel(&mut text, &mut ed);
+                ed.anchor = ed.caret;
+                text.insert_str(ed.caret, &p);
+                ed.caret += p.len();
+                composing = !p.is_empty();
+                changed = true;
+            }
             egui::Event::Text(s) | egui::Event::Paste(s) | egui::Event::Ime(egui::ImeEvent::Commit(s)) => {
                 let s: String = s.chars().filter(|c| !c.is_control() || *c == '\n').collect();
+                // the committed text replaces the pre-edit text
+                if composing {
+                    delete_sel(&mut text, &mut ed);
+                    composing = false;
+                    changed = true;
+                }
                 if s.is_empty() {
                     continue;
                 }
@@ -1078,6 +1104,8 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
                 }
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                // a key the input method let through ends the composition: the pre-edit text stays
+                composing = false;
                 let shift = modifiers.shift;
                 let mut moved = None;
                 match key {
@@ -1159,6 +1187,13 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
     if changed && text != tp.text {
         actions.push(("graphics.setText".into(), json!({"clip": ed.clip, "layer": ed.layer, "text": text, "merge": true})));
     }
+    ui.data_mut(|d| {
+        if composing && !stop {
+            d.insert_temp(ime_id, (ed.clip, ed.layer));
+        } else {
+            d.remove::<(u64, usize)>(ime_id);
+        }
+    });
     if stop {
         end_edit(app, ui);
     } else {
